@@ -1,0 +1,254 @@
+openapi: 3.0.3
+info:
+  title: Healthcare Telemetry API
+  version: 1.0.0
+  description: HTTP API for telemetry ingestion and patient monitoring.
+servers:
+  - url: http://localhost:3000
+    description: Local backend
+paths:
+  /health:
+    get:
+      summary: Health check
+      tags: [System]
+      responses:
+        "200":
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /api/v1/telemetry/ingest:
+    post:
+      summary: Ingest telemetry
+      tags: [Telemetry]
+      security:
+        - DeviceApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TelemetryPayload"
+            example:
+              messageId: msg-demo-001
+              timestamp: "2026-09-21T08:00:00.000Z"
+              metrics:
+                - type: HEART_RATE
+                  value: 78
+                - type: SPO2
+                  value: 98
+      responses:
+        "201":
+          description: Telemetry stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestResponse"
+        "200":
+          description: Duplicate message acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuplicateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Missing or invalid ingestion key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Key does not match payload deviceId
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/portal/devices:
+    get:
+      summary: List monitored devices
+      tags: [Portal]
+      responses:
+        "200":
+          description: Devices with latest status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DeviceSummary"
+  /api/v1/portal/devices/{deviceId}/latest:
+    get:
+      summary: Get latest telemetry for a device
+      tags: [Portal]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Latest telemetry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LatestResponse"
+  /api/v1/portal/devices/{deviceId}/history:
+    get:
+      summary: Get telemetry history
+      tags: [Portal]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Time-series records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deviceId:
+                    type: string
+                  records:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TelemetryRecord"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v1/portal/patients/{patientId}:
+    get:
+      summary: Get patient profile and monitoring data
+      tags: [Patients]
+      parameters:
+        - name: patientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Patient detail with up to 48 chart points per device
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PatientDetail"
+        "404":
+          description: Patient not found
+components:
+  securitySchemes:
+    DeviceApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Per-device UUID key. Use Authorize, then execute the ingest request.
+  parameters:
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status: { type: string, example: ok }
+        service: { type: string, example: healthcare-telemetry-api }
+    Metric:
+      type: object
+      required: [type, value]
+      properties:
+        type: { type: string, enum: [HEART_RATE, SPO2, STEPS] }
+        value: { type: number }
+    TelemetryPayload:
+      type: object
+      required: [messageId, timestamp, metrics]
+      properties:
+        deviceId: { type: string }
+        messageId: { type: string }
+        timestamp:
+          { oneOf: [{ type: string, format: date-time }, { type: number }] }
+        metrics:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/Metric" }
+    TelemetryRecord:
+      allOf:
+        - $ref: "#/components/schemas/TelemetryPayload"
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            serverReceivedAt: { type: string, format: date-time }
+    IngestResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        recordId: { type: string, format: uuid }
+        serverTimestamp: { type: integer, format: int64 }
+    DuplicateResponse:
+      type: object
+      properties:
+        status: { type: string, example: ACK_DUPLICATE }
+        serverTimestamp: { type: integer, format: int64 }
+    DeviceSummary:
+      type: object
+      properties:
+        id: { type: string }
+        patientId: { type: string }
+        patientName: { type: string }
+        deviceName: { type: string }
+        age: { type: integer }
+        hometown: { type: string }
+        status: { type: string }
+        alert: { type: boolean }
+        latest: { type: string, format: date-time, nullable: true }
+    LatestResponse:
+      type: object
+      properties:
+        deviceId: { type: string }
+        latest: { $ref: "#/components/schemas/TelemetryRecord", nullable: true }
+        status: { type: string, enum: [Normal, "No signal"] }
+    PatientDetail:
+      type: object
+      properties:
+        id: { type: string }
+        fullName: { type: string }
+        age: { type: integer }
+        hometown: { type: string }
+        devices:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              patientId: { type: string }
+              deviceName: { type: string }
+              status: { type: string }
+              latest:
+                { $ref: "#/components/schemas/TelemetryRecord", nullable: true }
+              history:
+                type: array
+                maxItems: 48
+                items: { $ref: "#/components/schemas/TelemetryRecord" }
+    ErrorResponse:
+      type: object
+      properties:
+        error: { type: string }

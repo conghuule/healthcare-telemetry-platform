@@ -1,0 +1,15 @@
+FROM node:22-alpine AS runtime
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY package*.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+COPY src ./src
+COPY db ./db
+COPY docs ./docs
+
+USER node
+EXPOSE 3000
+CMD ["npm", "start"]

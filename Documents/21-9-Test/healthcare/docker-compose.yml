@@ -1,0 +1,70 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: healthcare-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: healthcare
+      POSTGRES_USER: healthcare
+      POSTGRES_PASSWORD: healthcare_dev_password
+    volumes:
+      - healthcare-postgres-data:/var/lib/postgresql/data
+      - ./backend/db/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U healthcare -d healthcare"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: healthcare-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://healthcare:healthcare_dev_password@db:5432/healthcare
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "3000:3000"
+
+  mock-device:
+    build:
+      context: ./mock-device
+      dockerfile: Dockerfile
+    container_name: healthcare-mock-device
+    restart: unless-stopped
+    environment:
+      API_URL: http://backend:3000/api/v1/telemetry/ingest
+      DEVICE_ID: bioheart-sensor-001
+      API_KEY: 9d6f7b4e-1a21-4f18-8d02-000000000001
+      INTERVAL_MS: 3000
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: healthcare-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+
+volumes:
+  healthcare-postgres-data:
